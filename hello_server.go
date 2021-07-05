@@ -26,11 +26,34 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(fmt.Sprintf("Hello, %s\n", name)))
 }
 
+func registrar(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	name := query.Get("name")
+	uniquifier := query.Get("uniquifier")
+	log.Printf("Received request to register name '%s' with uniquifier length %d", name, len(uniquifier))
+	if name == "" {
+		error_string := "Failure: Must include 'name' query"
+		w.Write([]byte(error_string))
+	}
+	if uniquifier == "" || len(uniquifier) < 16 {
+		w.Write([]byte(fmt.Sprintf("Failure: Uniquifier is too short at length %d\n", len(uniquifier))))
+	}
+}
+
+func authenticator(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	name := query.Get("name")
+	uniquifier := query.Get("uniquifier")
+	log.Printf("Received request to confirm registration with name '%s' and uniquifier length '%d'", name, len(uniquifier))
+}
+
 func main() {
 	// Create Server and Route Handlers
 	r := mux.NewRouter()
 
 	r.HandleFunc("/", handler)
+	r.HandleFunc("/register", registrar)
+	r.HandleFunc("/check", authenticator)
 
 	srv := &http.Server{
 		Handler:      r,
