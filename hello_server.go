@@ -26,7 +26,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = "Guest"
 	}
-	log.Printf("Received request for %s\n", name)
+	log.Printf("INFO: root request from %s\n", name)
 	w.Write([]byte(fmt.Sprintf("Hello, %s\n", name)))
 }
 
@@ -34,42 +34,73 @@ func registrar(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	name := query.Get("name")
 	uniquifier := query.Get("uniquifier")
-	log.Printf("Received request to register name '%s' with uniquifier length %d:\n%s%s",
+	source, err := getSource(r)
+	response := http.StatusNoContent
+	if check(err) {
+		response = http.StatusInternalServerError
+		w.WriteHeader(response)
+		log.Printf("FATAL: %d Encounterd %s while parsing sources", response, err.Error())
+		return
+	}
+
+	log.Printf("INFO: register name '%s' with uniquifier length %d from source: %s",
 		name,
 		len(uniquifier),
-		printRequest(r, false),
-		"remote-addr: "+r.RemoteAddr)
+		"remote-addr: "+source)
 	failed := false
+	error_string := ""
 	if name == "" {
-		error_string := "Failure: Must include 'name' query\n"
-		log.Print(error_string)
-		w.Write([]byte(error_string))
+		error_string = "400 Bad Request: Must include 'name' query\n"
 		failed = true
 	}
 	if uniquifier == "" || len(uniquifier) < 16 {
-		error_string := fmt.Sprintf("Failure: Uniquifier is too short at length %d\n", len(uniquifier))
-		log.Print(error_string)
-		w.Write([]byte(error_string))
+		error_string = fmt.Sprintf("400 Bad Request: Uniquifier is too short at length %d\n", len(uniquifier))
 		failed = true
 	}
 	if failed {
+		response = http.StatusBadRequest
+		w.WriteHeader(response)
+		log.Print(error_string)
+		w.Write([]byte(error_string))
 		return
 	}
 
-	source, err := getSource(r)
-	if check(err) {
-		w.WriteHeader(http.StatusInternalServerError)
+	matchedUser := false
+	response, matched, authZed, ok := confirmToken(name, uniquifier, source)
+	if !ok || !authZed {
+		w.WriteHeader(response)
 		return
+	} else {
+		matchedUser = matched
 	}
-	log.Printf("Sources are %s\n", source)
+	if !matchedUser {
+		if response, err := storeUniquifier(name, uniquifier); err != nil {
+			if check(err) {
+				log.Printf("ERROR: Failed to store user's (%s) uniquifier", name)
+				log.Println(err.Error())
+				w.WriteHeader(response)
+				return
+			}
+		}
+		if response, err := storeIPAddress(name, uniquifier, source); err != nil {
+			if check(err) {
+				log.Printf("ERROR: Failed to store user's (%s) IP address", name)
+				log.Println(err.Error())
+				w.WriteHeader(response)
+				return
+			}
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
+func confirmToken(name string, uniquifier string, source string) (int, bool, bool, bool) {
 	credPath := "/store/creds/"
 	users, err := os.ReadDir(credPath)
 	if check(err) {
 		log.Println(err.Error())
 		log.Println("FATAL: could not read the user uniquifiers")
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, false, false, false // Code, matched the user, authorized, ok
 	}
 
 	matchedUser := false
@@ -80,80 +111,29 @@ func registrar(w http.ResponseWriter, r *http.Request) {
 				if check(err) {
 					log.Println(err.Error())
 					log.Println("FATAL: could not compare the user uniquifier")
-					w.WriteHeader(http.StatusInternalServerError)
-					return
+					return http.StatusInternalServerError, matchedUser, false, false
 				}
-			} else {
+			} else { // The user's uniquifier is loaded; does it match the request's uniquifier?
 				if string(credbytes) == uniquifier {
-					if err := storeIPAddress(r, w, name, uniquifier); err != nil {
-						check(err)
-						log.Println(err.Error())
-						w.WriteHeader(http.StatusInternalServerError)
-					}
-					return
+					return http.StatusNoContent, matchedUser, true, true
 				} else {
 					log.Printf("INFO: User provided bad uniquifier")
-					w.WriteHeader(http.StatusUnauthorized)
-					return
+					return http.StatusUnauthorized, matchedUser, false, true
 				}
 			}
 		}
 	}
 
-	if !matchedUser {
-		if err := storeUniquifier(r, w, name, uniquifier); err != nil {
-			if check(err) {
-				log.Printf("ERROR: Failed to store user's (%s) uniquifier", name)
-				log.Println(err.Error())
-				return
-			}
-		}
-		if err := storeIPAddress(r, w, name, uniquifier); err != nil {
-			if check(err) {
-				log.Printf("ERROR: Failed to store user's (%s) IP address", name)
-				log.Println(err.Error())
-				return
-			}
-		}
-	}
-
-	// if cred, err := ioutil.ReadFile("/go/src/static-auth/" + name); err != nil {
-	// 	if check(err) {
-	// 		log.Printf("Uniquifier did not match %d", len(uniquifier))
-	// 		return
-	// 	}
-	// } else {
-	// 	log.Printf("Authorization: %t", uniquifier == string(cred))
-	// 	if uniquifier != string(cred) {
-	// 		error_string := "401: Not authorized\n"
-	// 		log.Print(error_string)
-	// 		w.WriteHeader(http.StatusUnauthorized)
-	// 		w.Write([]byte(error_string))
-	// 		return
-	// 	} else {
-	// 		err := ioutil.WriteFile("/store/auth/"+name, []byte(source), 0600)
-	// 		if check(err) {
-	// 			return
-	// 		}
-	// 	}
-	// }
-
+	return http.StatusUnauthorized, matchedUser, false, true
 }
 
-func storeIPAddress(r *http.Request, w http.ResponseWriter, name string, uniquifier string) error {
+func storeIPAddress(name string, uniquifier string, source string) (int, error) {
 	authPath := "/store/authz/"
 	filePath := authPath + name
 
 	bytes, err := ioutil.ReadFile(filePath)
 	if err != nil {
 		bytes = []byte{}
-	}
-
-	source, err := getSource(r)
-	if check(err) {
-		w.WriteHeader(http.StatusInternalServerError)
-		log.Println(err.Error())
-		return err
 	}
 
 	contents := string(bytes)
@@ -174,32 +154,45 @@ func storeIPAddress(r *http.Request, w http.ResponseWriter, name string, uniquif
 
 	err = ioutil.WriteFile(filePath, []byte(contents), 0600)
 	if check(err) {
-		w.WriteHeader(http.StatusInternalServerError)
 		log.Println(err.Error())
-		return err
+		return http.StatusInternalServerError, err
 	}
 
-	return nil
+	return http.StatusNoContent, nil
 }
 
-func storeUniquifier(r *http.Request, w http.ResponseWriter, name string, uniquifier string) error {
+func storeUniquifier(name string, uniquifier string) (int, error) {
 	credPath := "/store/creds/"
 	filePath := credPath + name
 
 	err := ioutil.WriteFile(filePath, []byte(uniquifier), 0600)
 	if check(err) {
-		w.WriteHeader(http.StatusInternalServerError)
 		log.Println(err.Error())
-		return err
+		return http.StatusInternalServerError, err
 	}
-	return nil
+	return http.StatusNoContent, nil
 }
 
 func authenticator(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	name := query.Get("name")
 	uniquifier := query.Get("uniquifier")
-	log.Printf("Received request to confirm registration with name '%s' and uniquifier length '%d'\n", name, len(uniquifier))
+	source, err := getSource(r)
+	if check(err) {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Println(err.Error())
+		return
+	}
+
+	response, matched, authZed, ok := confirmToken(name, uniquifier, source)
+	log.Printf("INFO: confirm registration with name '%s' and uniquifier length '%d'; response %d matched %t authZed %t ok %t\n",
+		name,
+		len(uniquifier),
+		response,
+		matched,
+		authZed,
+		ok)
+	w.WriteHeader(response)
 }
 
 func main() {
@@ -237,6 +230,7 @@ func main() {
 	// Configure registrations
 	os.Mkdir("/store/authz", 0777)
 	os.Mkdir("/store/creds", 0777)
+	os.Mkdir("/store/cache", 0777)
 
 	// Start Server
 	go func() {
