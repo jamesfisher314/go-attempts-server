@@ -202,6 +202,17 @@ func main() {
 	r.HandleFunc("/", handler)
 	r.HandleFunc("/register", registrar)
 	r.HandleFunc("/check", authenticator)
+	// r.HandleFunc("/share/add", addShare)
+	// r.HandleFunc("/share/delete", deleteShare)
+	// r.HandleFunc("/share", checkShare)
+	// r.HandleFunc("/subscribe/add", addSubscribe)
+	// r.HandleFunc("/subscribe/delete", unSubscribe)
+	// r.HandleFunc("/subscribe", checkSubscribe)
+
+	// r.HandleFunc("/manifest/add", addManifest)
+	// r.HandleFunc("/manifest/get", getManifest)
+	// r.HandleFunc("/blob/add", addBlob)
+	// r.HandleFunc("/blob/get", getBlob)
 
 	srv := &http.Server{
 		Handler:      r,
