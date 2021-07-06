@@ -15,9 +15,9 @@ go-docker:latest
 echo $?
 
 export CONTAINER=`docker ps -a | grep go-docker:latest | cut -d' ' -f1`
-for container in $CONTAINER; do echo docker exec -it $container bash; echo docker logs $container; done
+for container in $CONTAINER; do echo docker exec -it $container bash; echo docker logs $container; docker logs $container; done
 
-# docker exec -it $CONTAINER bash
 docker ps -a | grep go-docker
+docker image ls | grep go-docker
 echo tail -f /docker-vols/go-docker-logs/go-docker.main.log
 tail -f /docker-vols/go-docker-logs/go-docker.main.log
