@@ -3,6 +3,7 @@
 
 ARG GOLANG_LATEST="golang@sha256:91b3c5472d9a2ef12f3165aa8979825a5d8b059720b00412f89fc465a04aaa0c"
 ARG GOLANG_ALPINE3_13="golang@sha256:4919b2f118f75395f69adcb899c1b796c4337d9649f0ef73aab34eef040149cf"
+ARG ALPINE_3_13="alpine@sha256:f51ff2d96627690d62fee79e6eecd9fa87429a38142b5df8a3bfbb26061df7fc"
 # Start from the latest golang base image 
 # FROM golang@sha256:91b3c5472d9a2ef12f3165aa8979825a5d8b059720b00412f89fc465a04aaa0c as builder # golang:latest
 # This next is golang:alpine3.13
@@ -41,8 +42,10 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -o /app/main .
 # RUN chown ${USER}:${USER} /app/main
 
-# 2: Time to make it tiny
-FROM scratch
+# # 2: Time to make it tiny
+# FROM scratch
+# 2: Time to make it smaller
+FROM ${ALPINE_3_13}
 
 # Import from builder for non-root running
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
