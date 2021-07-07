@@ -3,9 +3,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -180,7 +182,7 @@ func authenticator(w http.ResponseWriter, r *http.Request) {
 	source, err := getSource(r)
 	if check(err) {
 		w.WriteHeader(http.StatusInternalServerError)
-		log.Println(err.Error())
+		log.Printf("Failed to get source due to %s\n", err.Error())
 		return
 	}
 
@@ -193,6 +195,49 @@ func authenticator(w http.ResponseWriter, r *http.Request) {
 		authZed,
 		ok)
 	w.WriteHeader(response)
+}
+
+func addBlob(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	name := query.Get("name")
+	uniquifier := query.Get("uniquifier")
+	source, err := getSource(r)
+	if check(err) {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Printf("Failed to get source due to %s\n", err.Error())
+		return
+	}
+
+	code, matched, authorized, ok := confirmToken(name, uniquifier, source)
+	if !ok || !authorized || !matched {
+		w.WriteHeader(code)
+		log.Panicf("Blob upload failed due to lack of AuthZ with status %dz match %t, authZ %t, ok %t", code, matched, authorized, ok)
+		return
+	}
+
+	err = r.ParseMultipartForm(5 * 1024 * 104)
+	if check(err) {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Printf("Failed to parse file upload form due to %s\n", err.Error())
+		return
+	}
+
+	blob, _, err := r.FormFile("blob")
+	if check(err) {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Printf("Failed to parse file upload file due to %s\n", err.Error())
+		return
+	}
+
+	blobHash := r.Header.Get("fromator.hash")
+	os.MkdirAll("/store/cache/"+name, 0666)
+
+	blobFile, err := os.Create
+
+	defer blob.Close()
+	io.Copy(, blob) // Thought I'd copy to a file directly and compare the written hash with the declared hash. If not accurate, discard
+
+
 }
 
 func main() {
@@ -211,7 +256,7 @@ func main() {
 
 	// r.HandleFunc("/manifest/add", addManifest)
 	// r.HandleFunc("/manifest/get", getManifest)
-	// r.HandleFunc("/blob/add", addBlob)
+	r.HandleFunc("/blob/add", addBlob)
 	// r.HandleFunc("/blob/get", getBlob)
 
 	srv := &http.Server{
